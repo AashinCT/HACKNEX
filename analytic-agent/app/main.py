@@ -4,7 +4,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from app.analyzer import analyze_dataframe
-from app.llm import ask_qwen3
+from app.llm import ask_qwen3, ask_coder
 from app.verifier import profile_dataframe, verify_result
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -39,6 +39,7 @@ def analyze(request: AnalyzeRequest):
         plan = ask_qwen3(request.question, schema)
         if plan['intent'] == 'unknown':
             return {'status':'refused','question':request.question,'reason':plan['reason'],'evidence':{'profile':profile_dataframe(df),'plan':plan}}
+        generated_code = ask_coder(request.question, schema, plan)
         result = analyze_dataframe(df, plan)
         verification = verify_result(df, plan, result)
         if not verification['verified']:
