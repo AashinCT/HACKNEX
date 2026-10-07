@@ -1,0 +1,2 @@
+def build_proof_package(question, dataset, plan, generated_code, executed_result, evidence_rows, profile, verification, audit, trace):
+    return {"question":question,"dataset":dataset,"claim":{"answer":executed_result,"status":"verified"},"analysis_plan":plan,"proof_code":generated_code,"execution_result":executed_result,"evidence_rows":evidence_rows,"data_profile":profile,"verification":verification,"verifier_audit":audit,"trace":trace}
