@@ -1,106 +1,100 @@
-import { analysisDetails, analysisList } from '../data/analysisMock'
-import { datasets } from '../data/mockData'
-
-// Empty VITE_API_URL means "use mock data"
-const API_URL = import.meta.env.VITE_API_URL
-const USE_MOCK = !API_URL
-
-const wait = (ms = 300) => new Promise((resolve) => setTimeout(resolve, ms))
+const API_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, options)
+  const contentType = response.headers.get('content-type') || ''
+  const body = contentType.includes('application/json') ? await response.json() : await response.text()
   if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}`)
+    const message = typeof body === 'object' && (body?.detail || body?.reason)
+      ? body.detail || body.reason
+      : `Request failed with status ${response.status}`
+    throw new Error(message)
   }
-  return response.json()
-}
-
-// Mock only: decides which sample result to show for a question
-function pickMockAnalysisId(question, mode) {
-  if (question.toLowerCase().includes('profit')) return 'a-098'
-  if (mode === 'blend') return 'a-100'
-  if (mode === 'external') return 'a-099'
-  return 'a-101'
+  return body
 }
 
 export async function getDatasets() {
-  if (USE_MOCK) {
-    await wait()
-    return datasets
-  }
-  return request('/datasets')
+  return JSON.parse(localStorage.getItem('hacknex.datasets') || '[]')
 }
 
 export async function uploadDataset(file) {
-  if (USE_MOCK) {
-    await wait()
-    return { id: 'd-new', name: file.name }
-  }
   const body = new FormData()
   body.append('file', file)
-  return request('/datasets/upload', { method: 'POST', body })
+  const result = await request('/api/upload', { method: 'POST', body })
+  const profile = result.profile || {}
+  const dataset = {
+    id: result.dataset,
+    backendPath: result.dataset,
+    name: result.original_filename || file.name,
+    type: file.name.split('.').pop().toUpperCase(),
+    rows: profile.rows || 0,
+    columns: profile.columns || 0,
+    updated: 'Just now',
+    qualityScore: profile.reliability_flags?.length ? 80 : 100,
+    status: profile.reliability_flags?.length ? 'warning' : 'verified',
+    profile,
+    schema: result.schema,
+  }
+  const current = JSON.parse(localStorage.getItem('hacknex.datasets') || '[]')
+  localStorage.setItem('hacknex.datasets', JSON.stringify([dataset, ...current]))
+  return dataset
 }
 
-export async function analyzeQuestion({ question, mode }) {
-  if (USE_MOCK) {
-    await wait()
-    return { id: pickMockAnalysisId(question, mode) }
-  }
-  return request('/analyze', {
+export async function analyzeQuestion({ question, dataset, session_id = 'frontend-demo' }) {
+  return request('/api/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, mode }),
+    body: JSON.stringify({ question, dataset, session_id }),
   })
 }
 
-export async function getAnalyses() {
-  if (USE_MOCK) {
-    await wait()
-    return analysisList
-  }
-  return request('/analyses')
-}
-
 export async function getAnalysis(id) {
-  if (USE_MOCK) {
-    await wait()
-    const found = analysisDetails[id]
-    if (!found) throw new Error('Analysis not found')
-    return found
-  }
-  return request(`/analyses/${id}`)
+  const saved = sessionStorage.getItem(`hacknex.analysis.${id}`)
+  if (!saved) throw new Error('Analysis not found')
+  return JSON.parse(saved)
 }
 
-export async function getEvidence(analysisId) {
-  if (USE_MOCK) {
-    await wait()
-    return []
+export async function saveAnalysis(id, analysis) {
+  sessionStorage.setItem(`hacknex.analysis.${id}`, JSON.stringify(analysis))
+  const ids = JSON.parse(sessionStorage.getItem('hacknex.analysis.ids') || '[]')
+  if (!ids.includes(id)) {
+    ids.unshift(id)
+    sessionStorage.setItem('hacknex.analysis.ids', JSON.stringify(ids.slice(0, 50)))
   }
-  return request(`/analyses/${analysisId}/evidence`)
+  return analysis
 }
 
-export async function getProof(analysisId) {
-  if (USE_MOCK) {
-    await wait()
-    return null
-  }
-  return request(`/analyses/${analysisId}/proof`)
+export async function getAnalyses() {
+  const ids = JSON.parse(sessionStorage.getItem('hacknex.analysis.ids') || '[]')
+  return ids.map((id) => {
+    const raw = sessionStorage.getItem(`hacknex.analysis.${id}`)
+    return raw ? JSON.parse(raw) : null
+  }).filter(Boolean).map((a) => ({
+    id: a.id,
+    question: a.question,
+    mode: 'internal',
+    status: a.status === 'verified' ? 'verified' : a.status === 'refused' ? 'cannot_answer' : a.status,
+    date: 'Just now',
+    result: a.answer ?? 'No result',
+    sourceCount: a.evidence_rows?.row_count || 0,
+  }))
 }
 
-export async function getExternalSources(analysisId) {
-  if (USE_MOCK) {
-    await wait()
-    return []
-  }
-  return request(`/analyses/${analysisId}/sources`)
+export async function getEvidence(id) {
+  const analysis = await getAnalysis(id)
+  return analysis.evidence_rows || analysis.proof?.evidence_rows || null
 }
 
-export async function downloadProof(analysisId) {
-  if (USE_MOCK) {
-    await wait()
-    return null
-  }
-  const response = await fetch(`${API_URL}/analyses/${analysisId}/proof/download`)
-  if (!response.ok) throw new Error('Unable to download proof')
-  return response.blob()
+export async function getProof(id) {
+  const analysis = await getAnalysis(id)
+  return analysis.proof || null
+}
+
+export async function downloadProof(id) {
+  const proof = await getProof(id)
+  return proof ? new Blob([JSON.stringify(proof, null, 2)], { type: 'application/json' }) : null
+}
+
+export function makeAnalysisId() {
+  return `analysis-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
