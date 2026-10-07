@@ -1,4 +1,1 @@
-# LLM integration placeholder
-
-# Qwen3:8b will be used for analytical reasoning and planning.
-# Qwen2.5-Coder will be used for executable analysis code generation.
+import json\nimport ollama\nfrom app.prompts import QWEN3_PLANNER_SYSTEM, build_planner_prompt\n\nQWEN3_MODEL = "qwen3:8b"\n\ndef ask_qwen3(question: str, schema: str) -> dict:\n    response = ollama.chat(model=QWEN3_MODEL, messages=[{"role":"system","content":QWEN3_PLANNER_SYSTEM},{"role":"user","content":build_planner_prompt(question, schema)}], options={"temperature":0})\n    content = response["message"]["content"].strip().replace("```json","").replace("```","").strip()\n    try:\n        plan = json.loads(content)\n    except json.JSONDecodeError as exc:\n        raise ValueError("Qwen3 returned invalid JSON") from exc\n    required = {"intent","target_column","group_by","filter","sort","needs_data","reason"}\n    missing = required - set(plan)\n    if missing:\n        raise ValueError(f"Planner response missing fields: {sorted(missing)}")\n    return plan\n
