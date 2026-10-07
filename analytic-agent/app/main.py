@@ -8,6 +8,7 @@ from app.analyzer import analyze_dataframe
 from app.llm import ask_qwen3, ask_coder
 from app.code_validator import validate_code
 from app.executor import execute_code
+from app.input_guard import validate_input
 from app.triage import triage_question
 from app.schema_resolver import resolve_schema
 from app.data_profile import build_data_profile, reliability_gate
@@ -62,9 +63,10 @@ def get_session(session_id: str):
 def analyze(request: AnalyzeRequest):
     trace = TraceLogger()
     trace.add("input_guard", "started", {"dataset": request.dataset})
-
-    if not request.question.strip():
-        return {"status": "refused", "reason": "Question is empty."}
+    input_check = validate_input(request.question)
+    trace.add("input_guard", "passed" if input_check["allowed"] else "failed", input_check)
+    if not input_check["allowed"]:
+        return {"status":"refused","question":request.question,"reason":input_check["reason"],"evidence":{"input_guard":input_check,"trace":trace.export()}}
 
     state.start(request.session_id, request.dataset)
     df = load_dataset(request.dataset)
