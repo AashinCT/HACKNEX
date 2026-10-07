@@ -4,6 +4,7 @@ import shutil
 import uuid
 import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.analyzer import analyze_dataframe
@@ -30,6 +31,13 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Proof-Carrying Data Analyst", version="0.4.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 state = StateManager()
 
 class AnalyzeRequest(BaseModel):
