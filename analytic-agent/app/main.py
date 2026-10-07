@@ -1,7 +1,9 @@
 # FastAPI entry point for the PSI08 Proof-Carrying Data Analyst
 from pathlib import Path
+import shutil
+import uuid
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 
 from app.analyzer import analyze_dataframe
@@ -21,25 +23,37 @@ from app.output_guard import guard_output
 from app.trace_logger import TraceLogger
 from app.proof_packager import build_proof_package
 from app.state_manager import StateManager
+from app.data_loader import load_tabular_file, validate_extension
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
+UPLOAD_DIR = DATA_DIR / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Proof-Carrying Data Analyst", version="0.3.0")
+app = FastAPI(title="Proof-Carrying Data Analyst", version="0.4.0")
 state = StateManager()
 
 class AnalyzeRequest(BaseModel):
     question: str
-    dataset: str = "sales.csv"
+    dataset: str
     session_id: str = "default"
 
+def resolve_dataset(dataset: str) -> Path:
+    name = Path(dataset).name
+    path = DATA_DIR / name
+    upload_path = UPLOAD_DIR / name
+    if path.exists():
+        return path
+    if upload_path.exists():
+        return upload_path
+    raise HTTPException(404, f"Dataset not found: {name}")
+
 def load_dataset(dataset: str):
-    path = DATA_DIR / dataset
-    if path.suffix.lower() != ".csv":
-        raise HTTPException(400, "MVP currently supports CSV datasets only.")
-    if not path.exists():
-        raise HTTPException(404, f"Dataset not found: {dataset}")
-    return pd.read_csv(path)
+    path = resolve_dataset(dataset)
+    try:
+        return load_tabular_file(path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 @app.get("/")
 def home():
@@ -48,11 +62,35 @@ def home():
         "agent": "Proof-Carrying Data Analyst",
         "planner_model": "qwen3:8b",
         "coder_model": "qwen2.5-coder:7b",
-        "architecture_version": "0.3.0",
+        "architecture_version": "0.4.0",
+        "supported_tabular_formats": [".csv", ".xlsx", ".xls", ".json", ".jsonl"],
+    }
+
+@app.post("/api/upload")
+async def upload_dataset(file: UploadFile = File(...)):
+    if not file.filename or not validate_extension(file.filename):
+        raise HTTPException(400, "Unsupported dataset format. Use CSV, XLSX, XLS, JSON, or JSONL.")
+    safe_name = f"{uuid.uuid4().hex}_{Path(file.filename).name}"
+    destination = UPLOAD_DIR / safe_name
+    with destination.open("wb") as output:
+        shutil.copyfileobj(file.file, output)
+    try:
+        df = load_tabular_file(destination)
+        profile = build_data_profile(df)
+        schema = resolve_schema(df)
+    except Exception as exc:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(400, f"Could not parse uploaded data: {exc}")
+    return {
+        "status": "uploaded",
+        "dataset": f"uploads/{safe_name}",
+        "original_filename": file.filename,
+        "profile": profile,
+        "schema": schema,
     }
 
 @app.get("/api/profile")
-def profile(dataset: str = "sales.csv"):
+def profile(dataset: str):
     return profile_dataframe(load_dataset(dataset))
 
 @app.get("/api/session/{session_id}")
@@ -73,12 +111,10 @@ def analyze(request: AnalyzeRequest):
 
     triage = triage_question(request.question)
     trace.add("triage", triage["status"], triage)
-
     if triage["status"] == "refuse":
         result = {"status":"refused","question":request.question,"reason":triage["reason"],"evidence":{"triage":triage,"trace":trace.export()}}
         state.record(request.session_id, result)
         return result
-
     if triage["status"] == "ambiguous":
         result = {"status":"clarify","question":request.question,"reason":triage["reason"],"evidence":{"triage":triage,"trace":trace.export()}}
         state.record(request.session_id, result)
@@ -88,20 +124,21 @@ def analyze(request: AnalyzeRequest):
     gate = reliability_gate(data_profile)
     trace.add("data_profile", "completed", data_profile)
     trace.add("reliability_gate", "passed" if gate["reliable"] else "failed", gate)
-
     if not gate["reliable"]:
         result = {"status":"refused","question":request.question,"reason":gate["reason"],"evidence":{"triage":triage,"profile":data_profile,"reliability_gate":gate,"trace":trace.export()}}
         state.record(request.session_id, result)
         return result
 
     resolved_schema = resolve_schema(df)
-    schema = "\n".join(f'- {item["name"]}: {item["dtype"]}' for item in resolved_schema["columns"])
+    schema = "\n".join(
+        f'- {item["name"]}: {item["dtype"]}; missing={item["missing"]}; unique={item["unique"]}; samples={item["sample"]}'
+        for item in resolved_schema["columns"]
+    )
     trace.add("schema_resolver", "completed", resolved_schema)
 
     try:
         plan = ask_qwen3(request.question, schema)
         trace.add("reasoning", "completed", plan)
-
         if plan["intent"] == "unknown" or not plan.get("needs_data", True):
             result = {"status":"refused","question":request.question,"reason":plan.get("reason","Question cannot be reliably answered from this dataset."),"evidence":{"triage":triage,"profile":data_profile,"schema":resolved_schema,"plan":plan,"trace":trace.export()}}
             state.record(request.session_id, result)
@@ -116,23 +153,17 @@ def analyze(request: AnalyzeRequest):
 
         for attempt in range(3):
             trace.add("analysis_agent", "started", {"attempt": attempt + 1})
-
             if attempt == 0:
                 generated_code = ask_coder(request.question, schema, plan)
             else:
                 generated_code = repair_code(request.question, schema, plan, generated_code, execution_error or "Previous verification failed.")
-
             safety = validate_code(generated_code)
             trace.add("tool_guard", "passed" if safety["valid"] else "failed", safety)
-
             if not safety["valid"]:
                 execution_error = safety["reason"]
                 if attempt < 2:
                     continue
-                decision = decide(triage, gate, safety)
-                result = {"status":"refused","question":request.question,"reason":decision["reason"],"generated_code":generated_code,"evidence":{"profile":data_profile,"schema":resolved_schema,"plan":plan,"code_validation":safety,"trace":trace.export()}}
-                state.record(request.session_id, result)
-                return result
+                return {"status":"refused","question":request.question,"reason":safety["reason"],"generated_code":generated_code,"evidence":{"profile":data_profile,"schema":resolved_schema,"plan":plan,"code_validation":safety,"trace":trace.export()}}
 
             try:
                 executed_result = execute_code(generated_code, df)
@@ -142,9 +173,7 @@ def analyze(request: AnalyzeRequest):
                 trace.add("sandbox_executor", "failed", {"error":execution_error})
                 if attempt < 2:
                     continue
-                result = {"status":"refused","question":request.question,"reason":"Analysis code could not be executed after 3 attempts.","generated_code":generated_code,"evidence":{"profile":data_profile,"schema":resolved_schema,"plan":plan,"trace":trace.export()}}
-                state.record(request.session_id, result)
-                return result
+                return {"status":"refused","question":request.question,"reason":"Analysis code could not be executed after 3 attempts.","generated_code":generated_code,"evidence":{"profile":data_profile,"schema":resolved_schema,"plan":plan,"trace":trace.export()}}
 
             verification = verify_result(df, plan, expected_result)
             deterministic_match = executed_result == expected_result.get("value") or executed_result == expected_result
@@ -153,63 +182,41 @@ def analyze(request: AnalyzeRequest):
                 verification["verified"] = False
                 verification["reason"] = "Executed code result does not match the independently computed result."
                 execution_error = verification["reason"]
-                trace.add("verification", "failed", verification)
                 if attempt < 2:
                     continue
                 break
 
             audit = audit_result(request.question, plan, generated_code, executed_result, expected_result, data_profile)
             trace.add("verifier_agent", "passed" if audit["verified"] else "failed", audit)
-
             if not verification["verified"] or not audit["verified"]:
                 execution_error = "Verifier rejected the generated analysis."
                 if attempt < 2:
                     continue
                 break
-
             break
 
         if audit is None or not audit["verified"] or not verification["verified"]:
-            decision = decide(triage, gate, safety, verification, audit or {"verified":False})
-            return_result = {"status":"refused","question":request.question,"reason":decision["reason"],"generated_code":generated_code,"executed_result":executed_result,"evidence":{"profile":data_profile,"schema":resolved_schema,"plan":plan,"verification":verification,"verifier_audit":audit,"trace":trace.export()}}
-            state.record(request.session_id, return_result)
-            return return_result
-
+            return {"status":"refused","question":request.question,"reason":"The analysis could not be independently verified.","generated_code":generated_code,"executed_result":executed_result,"evidence":{"profile":data_profile,"schema":resolved_schema,"plan":plan,"verification":verification,"verifier_audit":audit,"trace":trace.export()}}
+        
         evidence_rows = extract_evidence(df, plan, expected_result)
         output_guard = guard_output(executed_result, generated_code, verification, audit)
         trace.add("output_guard", "passed" if output_guard["safe"] else "failed", output_guard)
-
         if not output_guard["safe"]:
-            result = {"status":"refused","question":request.question,"reason":output_guard["reason"],"evidence":{"trace":trace.export()}}
-            state.record(request.session_id, result)
-            return result
+            return {"status":"refused","question":request.question,"reason":output_guard["reason"],"evidence":{"trace":trace.export()}}
 
-        trace.add("proof_packager", "completed")
-        proof = build_proof_package(
-            request.question,
-            request.dataset,
-            plan,
-            generated_code,
-            executed_result,
-            evidence_rows,
-            data_profile,
-            verification,
-            audit,
-            trace.export(),
-        )
-
+        proof = build_proof_package(request.question, request.dataset, plan, generated_code, executed_result, evidence_rows, data_profile, verification, audit, trace.export())
         result = {
-            "status": "verified",
-            "question": request.question,
-            "answer": expected_result["value"],
-            "metric_value": expected_result.get("metric_value"),
-            "operation": expected_result["operation"],
-            "source": request.dataset,
-            "confidence": min(0.99, float(audit["confidence"])),
-            "generated_code": generated_code,
-            "executed_result": executed_result,
-            "evidence_rows": evidence_rows,
-            "proof": proof,
+            "status":"verified",
+            "question":request.question,
+            "answer":expected_result["value"],
+            "metric_value":expected_result.get("metric_value"),
+            "operation":expected_result["operation"],
+            "source":request.dataset,
+            "confidence":min(0.99, float(audit["confidence"])),
+            "generated_code":generated_code,
+            "executed_result":executed_result,
+            "evidence_rows":evidence_rows,
+            "proof":proof,
         }
         state.record(request.session_id, result)
         return result
