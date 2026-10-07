@@ -1,6 +1,6 @@
 import ollama
 
-CODER_MODEL = "qwen2.5-coder:7b"
+CODER_MODEL = "qwen2.5-coder:latest"
 
 def repair_code(question: str, schema: str, plan: dict, broken_code: str, error: str) -> str:
     prompt = ("Repair this Python/Pandas analysis code.\n\n"
