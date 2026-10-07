@@ -3,7 +3,7 @@ import ollama
 from app.prompts import QWEN3_PLANNER_SYSTEM, build_planner_prompt
 
 QWEN3_MODEL = "qwen3:8b"
-CODER_MODEL = "qwen2.5-coder:7b"
+CODER_MODEL = "qwen2.5-coder:latest"
 
 def ask_qwen3(question: str, schema: str) -> dict:
     response = ollama.chat(model=QWEN3_MODEL, messages=[{"role":"system","content":QWEN3_PLANNER_SYSTEM},{"role":"user","content":build_planner_prompt(question, schema)}], options={"temperature":0})
