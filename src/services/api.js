@@ -5,16 +5,26 @@ async function request(path, options = {}) {
   const contentType = response.headers.get('content-type') || ''
   const body = contentType.includes('application/json') ? await response.json() : await response.text()
   if (!response.ok) {
-    const message = typeof body === 'object' && (body?.detail || body?.reason)
-      ? body.detail || body.reason
-      : `Request failed with status ${response.status}`
+    const message = typeof body === 'object' && (body?.detail || body?.reason) ? body.detail || body.reason : `Request failed with status ${response.status}`
     throw new Error(message)
   }
   return body
 }
 
 export async function getDatasets() {
-  return JSON.parse(localStorage.getItem('hacknex.datasets') || '[]')
+  const saved = JSON.parse(localStorage.getItem('hacknex.datasets') || '[]')
+  const sample = {
+    id: 'sales.csv',
+    backendPath: 'sales.csv',
+    name: 'sales.csv',
+    type: 'CSV',
+    rows: 10,
+    columns: 5,
+    updated: 'Bundled sample',
+    qualityScore: 100,
+    status: 'verified',
+  }
+  return [sample, ...saved.filter((item) => item.id !== sample.id)]
 }
 
 export async function uploadDataset(file) {
@@ -23,20 +33,17 @@ export async function uploadDataset(file) {
   const result = await request('/api/upload', { method: 'POST', body })
   const profile = result.profile || {}
   const dataset = {
-    id: result.dataset,
-    backendPath: result.dataset,
+    id: result.dataset, backendPath: result.dataset,
     name: result.original_filename || file.name,
     type: file.name.split('.').pop().toUpperCase(),
-    rows: profile.rows || 0,
-    columns: profile.columns || 0,
+    rows: profile.rows || 0, columns: profile.columns || 0,
     updated: 'Just now',
     qualityScore: profile.reliability_flags?.length ? 80 : 100,
     status: profile.reliability_flags?.length ? 'warning' : 'verified',
-    profile,
-    schema: result.schema,
+    profile, schema: result.schema,
   }
   const current = JSON.parse(localStorage.getItem('hacknex.datasets') || '[]')
-  localStorage.setItem('hacknex.datasets', JSON.stringify([dataset, ...current]))
+  localStorage.setItem('hacknex.datasets', JSON.stringify([dataset, ...current.filter((item) => item.id !== dataset.id)]))
   return dataset
 }
 
@@ -70,12 +77,9 @@ export async function getAnalyses() {
     const raw = sessionStorage.getItem(`hacknex.analysis.${id}`)
     return raw ? JSON.parse(raw) : null
   }).filter(Boolean).map((a) => ({
-    id: a.id,
-    question: a.question,
-    mode: 'internal',
+    id: a.id, question: a.question, mode: 'internal',
     status: a.status === 'verified' ? 'verified' : a.status === 'refused' ? 'cannot_answer' : a.status,
-    date: 'Just now',
-    result: a.answer ?? 'No result',
+    date: 'Just now', result: a.answer ?? 'No result',
     sourceCount: a.evidence_rows?.row_count || 0,
   }))
 }
