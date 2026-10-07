@@ -1,1 +1,123 @@
-import pandas as pd\n\nSUPPORTED_INTENTS = {"count_rows","sum","average","minimum","maximum","groupby_sum","groupby_average","groupby_minimum","groupby_maximum"}\n\ndef analyze_dataframe(df: pd.DataFrame, plan: dict) -> dict:\n    intent = plan.get("intent")\n    target = plan.get("target_column")\n    group_by = plan.get("group_by")\n    if intent == "count_rows":\n        return {"value": int(len(df)), "operation": intent}\n    if target not in df.columns:\n        raise ValueError(f"Column not found: {target}")\n    if intent in {"sum","average","minimum","maximum"}:\n        series = pd.to_numeric(df[target], errors="coerce").dropna()\n        if series.empty:\n            raise ValueError(f"No usable numeric values in {target}.")\n        fn = {"sum":series.sum,"average":series.mean,"minimum":series.min,"maximum":series.max}[intent]\n        return {"value": float(fn()), "operation": intent, "column": target}\n    if intent.startswith("groupby_"):\n        if group_by not in df.columns:\n            raise ValueError(f"Grouping column not found: {group_by}")\n        numeric = pd.to_numeric(df[target], errors="coerce")\n        work = df.assign(__numeric_target=numeric).dropna(subset=["__numeric_target"])\n        agg = {"groupby_sum":"sum","groupby_average":"mean","groupby_minimum":"min","groupby_maximum":"max"}[intent]\n        grouped = work.groupby(group_by)["__numeric_target"].agg(agg).sort_values(ascending=False)\n        if grouped.empty:\n            raise ValueError("No usable grouped values were found.")\n        return {"value":str(grouped.index[0]),"metric_value":float(grouped.iloc[0]),"operation":intent,"column":target,"group_by":group_by,"ranking":{str(k):float(v) for k,v in grouped.items()}}\n    raise ValueError(f"Unsupported or unreliable intent: {intent}")\n
+import pandas as pd
+
+
+SUPPORTED_INTENTS = {
+    "count_rows",
+    "sum",
+    "average",
+    "minimum",
+    "maximum",
+    "groupby_sum",
+    "groupby_average",
+    "groupby_minimum",
+    "groupby_maximum",
+}
+
+
+def analyze_dataframe(df: pd.DataFrame, plan: dict) -> dict:
+    intent = plan.get("intent")
+    target = plan.get("target_column")
+    group_by = plan.get("group_by")
+
+    if intent == "count_rows":
+        return {
+            "value": int(len(df)),
+            "operation": intent,
+        }
+
+    if target not in df.columns:
+        raise ValueError(f"Column not found: {target}")
+
+    if intent in {"sum", "average", "minimum", "maximum"}:
+        series = pd.to_numeric(
+            df[target],
+            errors="coerce"
+        ).dropna()
+
+        if series.empty:
+            raise ValueError(
+                f"No usable numeric values in {target}."
+            )
+
+        functions = {
+            "sum": series.sum,
+            "average": series.mean,
+            "minimum": series.min,
+            "maximum": series.max,
+        }
+
+        value = functions[intent]()
+
+        return {
+            "value": float(value),
+            "operation": intent,
+            "column": target,
+        }
+
+    if intent.startswith("groupby_"):
+        if group_by not in df.columns:
+            raise ValueError(
+                f"Group-by column not found: {group_by}"
+            )
+
+        grouped = df.groupby(group_by)[target].apply(
+            lambda x: pd.to_numeric(
+                x,
+                errors="coerce"
+            ).sum()
+            if intent == "groupby_sum"
+            else pd.to_numeric(
+                x,
+                errors="coerce"
+            ).mean()
+            if intent == "groupby_average"
+            else pd.to_numeric(
+                x,
+                errors="coerce"
+            ).min()
+            if intent == "groupby_minimum"
+            else pd.to_numeric(
+                x,
+                errors="coerce"
+            ).max()
+        )
+
+        grouped = grouped.dropna()
+
+        if grouped.empty:
+            raise ValueError(
+                f"No usable numeric values in {target}."
+            )
+
+        if intent == "groupby_sum":
+            answer = grouped.idxmax()
+            value = grouped.max()
+
+        elif intent == "groupby_average":
+            answer = grouped.idxmax()
+            value = grouped.max()
+
+        elif intent == "groupby_minimum":
+            answer = grouped.idxmin()
+            value = grouped.min()
+
+        elif intent == "groupby_maximum":
+            answer = grouped.idxmax()
+            value = grouped.max()
+
+        else:
+            raise ValueError(
+                f"Unsupported intent: {intent}"
+            )
+
+        return {
+            "value": answer,
+            "metric_value": float(value),
+            "operation": intent,
+            "column": target,
+            "group_by": group_by,
+        }
+
+    raise ValueError(
+        f"Unsupported analytical intent: {intent}"
+    )
