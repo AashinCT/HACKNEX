@@ -10,6 +10,7 @@ from app.executor import execute_code
 from app.triage import triage_question
 from app.schema_resolver import resolve_schema
 from app.data_profile import build_data_profile, reliability_gate
+from app.evidence import extract_evidence
 from app.verifier import profile_dataframe, verify_result
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -119,6 +120,7 @@ def analyze(request: AnalyzeRequest):
         expected_result = analyze_dataframe(df, plan)
 
         verification = verify_result(df, plan, expected_result)
+        evidence_rows = extract_evidence(df, plan, expected_result)
 
         if not verification["verified"]:
             return {
@@ -132,6 +134,7 @@ def analyze(request: AnalyzeRequest):
                     "generated_code": generated_code,
                     "executed_result": executed_result,
                     "verification": verification,
+                    "evidence_rows": evidence_rows,
                 },
             }
 
@@ -146,6 +149,7 @@ def analyze(request: AnalyzeRequest):
             "plan": plan,
             "generated_code": generated_code,
             "executed_result": executed_result,
+            "evidence_rows": evidence_rows,
             "evidence": {
                 "triage": triage,
                 "profile": data_profile,
