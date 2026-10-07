@@ -1,31 +1,43 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { BarChart3, Info } from 'lucide-react'
 import Button from '../common/Button'
 import ModeSelector from '../analysis/ModeSelector'
 import QuestionInput from '../analysis/QuestionInput'
 import AnalysisProgress from '../analysis/AnalysisProgress'
 import { modes } from '../../data/mockData'
+import { analyzeQuestion } from '../../services/api'
 
 export default function AskData() {
-  // useState remembers values between renders
+  const navigate = useNavigate()
   const [question, setQuestion] = useState('')
   const [mode, setMode] = useState('internal')
   const [running, setRunning] = useState(false)
-  const [finished, setFinished] = useState(false)
+  const [error, setError] = useState(false)
+  // useRef keeps a value without causing a re-render
+  const resultId = useRef(null)
 
   const selectedMode = modes.find((m) => m.id === mode)
 
-  function handleAnalyze(event) {
+  async function handleAnalyze(event) {
     event.preventDefault()
     if (!question.trim()) return
-    setFinished(false)
+    setError(false)
     setRunning(true)
-    // Later: call analyzeQuestion({ question, mode }) from services/api.js here
+    try {
+      const result = await analyzeQuestion({ question, mode })
+      resultId.current = result.id
+    } catch {
+      setRunning(false)
+      setError(true)
+    }
   }
 
+  // The progress display is a mock timer for now. With the real backend,
+  // this should run when the backend reports the analysis is complete.
   function handleComplete() {
     setRunning(false)
-    setFinished(true)
+    if (resultId.current) navigate(`/analyses/${resultId.current}`)
   }
 
   return (
@@ -52,9 +64,9 @@ export default function AskData() {
 
         {running && <AnalysisProgress onComplete={handleComplete} />}
 
-        {finished && (
-          <p className="rounded-xl border border-line bg-canvas p-4 text-sm text-muted">
-            Mock analysis finished. The full results view is built in Phase 4.
+        {error && (
+          <p role="alert" className="text-sm text-danger">
+            Unable to start the analysis. Please try again.
           </p>
         )}
 
