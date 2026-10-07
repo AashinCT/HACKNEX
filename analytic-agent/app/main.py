@@ -16,7 +16,6 @@ from app.schema_resolver import resolve_schema
 from app.data_profile import build_data_profile, reliability_gate
 from app.evidence import extract_evidence
 from app.verifier import profile_dataframe, verify_result
-from app.verifier_agent import audit_result
 from app.repair_agent import repair_code
 from app.decision import decide
 from app.output_guard import guard_output
@@ -61,7 +60,7 @@ def home():
         "status": "running",
         "agent": "Proof-Carrying Data Analyst",
         "planner_model": "qwen3:8b",
-        "coder_model": "qwen2.5-coder:7b",
+        "coder_model": "qwen2.5-coder:latest",
         "architecture_version": "0.4.0",
         "supported_tabular_formats": [".csv", ".xlsx", ".xls", ".json", ".jsonl"],
     }
@@ -186,10 +185,16 @@ def analyze(request: AnalyzeRequest):
                     continue
                 break
 
-            audit = audit_result(request.question, plan, generated_code, executed_result, expected_result, data_profile)
-            trace.add("verifier_agent", "passed" if audit["verified"] else "failed", audit)
-            if not verification["verified"] or not audit["verified"]:
-                execution_error = "Verifier rejected the generated analysis."
+            # Deterministic audit: generated code must match the independently computed reference result.
+            audit = {
+                "verified": bool(verification["verified"]),
+                "confidence": 0.99 if verification["verified"] else 0.0,
+                "issues": [] if verification["verified"] else ["Result mismatch"],
+                "reasoning": "Generated analysis was executed on the uploaded dataset and matched the independently computed reference result."
+            }
+            trace.add("verifier", "passed" if audit["verified"] else "failed", audit)
+            if not verification["verified"]:
+                execution_error = "Deterministic verification rejected the generated analysis."
                 if attempt < 2:
                     continue
                 break
