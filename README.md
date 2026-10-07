@@ -1,4 +1,4 @@
-# Proof-Carrying Data Analyst 🕵️‍♂️📊
+# Proof-Carrying Data Analyst 
 
 An Agentic GenAI system built for rigorous, mathematically bulletproof data analysis. 
 
@@ -16,7 +16,7 @@ This solves the biggest flaw of modern AI—**hallucinations and unverified conf
 **Automated Tax Compliance & Corporate Auditing (Fintech)**
 
 *   **The Real-World Mess:** Multinational corporations deal with thousands of invoices, receipts, and bank statements across different currencies, varying tax codes, and duplicate billing attempts by suppliers.
-*   **How Your System Works:** An auditor asks, *"What was our exact net deductible expense in Europe for Q3 after currency conversion and removing duplicate vendor entries?"*
+*   more detailed**How Your System Works:** An auditor asks, *"What was our exact net deductible expense in Europe for Q3 after currency conversion and removing duplicate vendor entries?"*
 *   **The Real-Life Impact:** Instead of an LLM blindly summarizing numbers (and risking millions in compliance fines if it hallucinates), our agent writes a Pandas script that cleans the messy logs, catches duplicate IDs, handles exchange rates, and outputs the final sum **along with the exact Python script**.
 *   The human auditor can run that script to instantly verify the compliance trail before submitting to tax authorities.
 
