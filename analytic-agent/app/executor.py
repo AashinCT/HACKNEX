@@ -25,6 +25,13 @@ def make_json_safe(value):
     return value
 
 def execute_code(code: str, df: pd.DataFrame) -> dict:
+    # pandas is already provided as `pd`; remove the common redundant import
+    # so the restricted sandbox does not need Python `__import__`.
+    code = "\n".join(
+        line for line in code.splitlines()
+        if line.strip() not in {"import pandas as pd", "import pandas"}
+    )
+
     namespace = {
         "__builtins__": SAFE_BUILTINS,
         "pd": pd,
