@@ -1,3 +1,1 @@
-# Verification engine placeholder
-
-# Result verification and reliability checks will be implemented here.
+def profile_dataframe(df) -> dict:\n    return {"rows":int(len(df)),"columns":int(len(df.columns)),"column_names":[str(c) for c in df.columns],"missing_cells":int(df.isna().sum().sum()),"duplicate_rows":int(df.duplicated().sum())}\n\ndef verify_result(df, plan: dict, result: dict) -> dict:\n    from app.analyzer import analyze_dataframe\n    reproduced = analyze_dataframe(df, plan)\n    if "metric_value" in result:\n        verified = reproduced.get("value") == result.get("value") and abs(reproduced.get("metric_value",0)-result.get("metric_value",0)) < 1e-9\n    else:\n        original = result.get("value")\n        reproduced_value = reproduced.get("value")\n        verified = abs(original-reproduced_value) < 1e-9 if isinstance(original,float) else original == reproduced_value\n    return {"verified":bool(verified),"reproduced_result":reproduced}\n
